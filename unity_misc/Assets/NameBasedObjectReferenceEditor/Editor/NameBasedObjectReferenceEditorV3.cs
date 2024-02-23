@@ -9,33 +9,7 @@ using System;
 using System.Reflection;
 using NUnit.Compatibility;
 
-namespace Osakana4242 {
-	public readonly struct Span<T> {
-		readonly IList<T> list_;
-		readonly int start_;
-		public readonly int Length;
-
-		public Span(IList<T> list, int start, int length) {
-			var _ = list[start];
-			_ = list[start + length - 1];
-
-			list_ = list;
-			start_ = start;
-			Length = length;
-		}
-
-		public T this[int index] =>
-			list_[start_ + index];
-
-		public Span<T> Slice(int start, int length) =>
-			new Span<T>(list_, start_ + start, length);
-	}
-
-	public static class SpanExt {
-		public static Span<T> AsSpan<T>(this IList<T> self) =>
-			new Span<T>(self, 0, self.Count);
-	}
-
+namespace NameBaseObjectReferenceEditorV3 {
 	public class NameBasedObjectReferenceEditorV3 : EditorWindow {
 
 		string rightText_ = "";
@@ -586,5 +560,31 @@ namespace Osakana4242 {
 				return AssetDatabase.GUIDToAssetPath(guid);
 			}
 		}
+	}
+
+	public readonly struct Span<T> {
+		readonly IList<T> list_;
+		readonly int start_;
+		public readonly int Length;
+
+		public Span(IList<T> list, int start, int length) {
+			var _ = list[start];
+			_ = list[start + length - 1];
+
+			list_ = list;
+			start_ = start;
+			Length = length;
+		}
+
+		public T this[int index] =>
+			list_[start_ + index];
+
+		public Span<T> Slice(int start, int length) =>
+			new Span<T>(list_, start_ + start, length);
+	}
+
+	public static class SpanExt {
+		public static Span<T> AsSpan<T>(this IList<T> self) =>
+			new Span<T>(self, 0, self.Count);
 	}
 }

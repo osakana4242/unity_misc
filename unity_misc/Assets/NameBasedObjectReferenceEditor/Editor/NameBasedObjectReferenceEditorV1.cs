@@ -7,9 +7,8 @@ using System.Text.RegularExpressions;
 using System.Text;
 using System;
 
-namespace Osakana4242 {
+namespace NameBasedObjectReferenceEditorV1 {
 	public class NameBasedObjectReferenceEditorV1 : EditorWindow {
-
 		string rightText_ = "";
 		File[] workList_ = new File[0];
 
@@ -20,7 +19,6 @@ namespace Osakana4242 {
 
 		void LoadFromSelection() {
 			GUI.FocusControl(null);
-			AssetDatabase.Refresh();
 
 			try {
 				var list = Selection.objects.
@@ -67,10 +65,13 @@ namespace Osakana4242 {
 			throw new System.OperationCanceledException();
 		}
 
-		void Apply() {
+		void Validate() {
 			GUI.FocusControl(null);
 			try {
-				var lines = rightText_.Split('\n').AsSpan();
+				var lines = rightText_.
+					Replace("\r\n", "\n").
+					Split('\n').
+					AsSpan();
 				var index = 0;
 
 				var nextWorkList = new File[workList_.Length];
@@ -84,10 +85,35 @@ namespace Osakana4242 {
 
 				workList_ = nextWorkList;
 				BuildText();
+			} finally {
+				EditorUtility.ClearProgressBar();
+			}
+		}
 
-				var canApply = System.Array.FindIndex(workList_, _item => !_item.CanApply()) == -1;
-				if (!canApply)
+		bool CanApply() {
+			return (GetInValidCount() == 0) && (0 < GetDirtyCount());
+		}
+
+		int GetInValidCount() =>
+			workList_.Sum(_item => _item.GetInValidCount());
+
+		int GetDirtyCount() =>
+			workList_.Sum(_item => _item.GetDirtyCount());
+
+		void Apply() {
+			GUI.FocusControl(null);
+			try {
+				Validate();
+
+				if (0 < GetInValidCount()) {
+					Debug.Log("can't apply");
 					return;
+				}
+
+				if (GetDirtyCount() <= 0) {
+					Debug.Log("no changes");
+					return;
+				}
 
 				try {
 					for (int i = 0; i < workList_.Length; ++i) {
@@ -95,6 +121,16 @@ namespace Osakana4242 {
 						var item = workList_[i];
 						item.Apply();
 					}
+
+					var nextList = new List<File>();
+					for (int i = 0; i < workList_.Length; ++i) {
+						ThrowIfCanceled();
+						var item1 = workList_[i];
+						var item2 = item1.Reload();
+						nextList.Add(item2);
+					}
+					workList_ = nextList.ToArray();
+
 				} finally {
 					AssetDatabase.Refresh();
 				}
@@ -102,22 +138,37 @@ namespace Osakana4242 {
 				EditorUtility.ClearProgressBar();
 			}
 		}
+		Vector2 scrollPosition_;
 
 		void OnGUI() {
 			using (new GUILayout.HorizontalScope()) {
 				if (GUILayout.Button("Load")) {
 					LoadFromSelection();
 				}
-				if (GUILayout.Button("Apply")) {
-					Apply();
+				if (GUILayout.Button("Validate")) {
+					Validate();
+				}
+				using (new EditorGUI.DisabledScope(!CanApply())) {
+					if (GUILayout.Button("Apply")) {
+						Apply();
+					}
 				}
 			}
-			rightText_ = EditorGUILayout.TextArea(rightText_);
-
+			EditorGUILayout.IntField("Invalid Count", GetInValidCount());
+			EditorGUILayout.IntField("Dirty Count", GetDirtyCount());
+			using (var scrollViewScope = new EditorGUILayout.ScrollViewScope(scrollPosition_)) {
+				scrollPosition_ = scrollViewScope.scrollPosition;
+				rightText_ = EditorGUILayout.TextArea(rightText_);
+			}
 		}
 
 		class File {
-			static readonly Regex regex = new Regex(@"((\w+):\s+)?{fileID:\s+(\w+),\s+guid:\s+(\w+),\s+type:\s+(\w+)}");
+
+			const string GroupLabel = "label";
+			const string GroupGUID = "guid";
+			const string GroupType = "type";
+			const string GroupFileID = "fileID";
+			static readonly Regex regex = new Regex($@"(?<{GroupLabel}>(\w+):\s+|(-.*))?{{fileID:\s+(?<{GroupFileID}>\w+),\s+guid:\s+(?<{GroupGUID}>\w+),\s+type:\s+(?<{GroupType}>\w+)}}");
 			public readonly string guid;
 			public readonly string path;
 			readonly FileItem[] itemArr;
@@ -132,11 +183,8 @@ namespace Osakana4242 {
 				for (var i = 0; i < matches.Count; ++i) {
 					var item = matches[i];
 					var groups = item.Groups;
-					var label = item.Groups[2].ToString();
-					var itemPrefix = item.Groups[3].ToString();
-					var itemGUID = item.Groups[4].ToString();
-					Debug.Log($"i: {i}, match: {item}, 2: {label}, 3: {itemPrefix}, 4: {itemGUID}");
-					var fileItem = FileItem.CreateFromGUID(label, itemGUID);
+					Debug.Log($"i: {i}, match: {item}, label: {groups[GroupLabel]}, fileID: {groups[GroupFileID]}, guid: {groups[GroupGUID]}, type: {groups[GroupType]}");
+					var fileItem = FileItem.CreateFromGUID(path, groups[GroupLabel].ToString(), groups[GroupGUID].ToString());
 					list.Add(fileItem);
 				}
 				itemArr = list.ToArray();
@@ -149,19 +197,34 @@ namespace Osakana4242 {
 				this.itemArr = itemArr;
 			}
 
-			public bool CanApply() {
+			public File Reload() {
+				return new File(guid, path);
+			}
+
+			public bool IsValid() {
 				var invalidIndex = System.Array.FindIndex(itemArr, (_item) => !_item.IsValid());
 				return invalidIndex == -1;
 			}
 
+			public bool IsDirty() {
+				var dirtyIndex = System.Array.FindIndex(itemArr, (_item) => _item.IsDirty());
+				return dirtyIndex != -1;
+			}
+
+			public int GetInValidCount() =>
+				itemArr.Count((_item) => !_item.IsValid());
+
+			public int GetDirtyCount() =>
+				itemArr.Count((_item) => _item.IsDirty());
+
 			public void Apply() {
-				if (!CanApply()) {
+				if (!IsValid()) {
 					throw new System.InvalidOperationException("Can't Apply");
 				}
 				var i = 0;
 				var text = regex.Replace(text_, (_m) => {
 					var item = itemArr[i];
-					var next = $"{{fileID: {_m.Groups[1]}, guid: {item.nextGUID}, type: {_m.Groups[3]}}}";
+					var next = $"{_m.Groups[GroupLabel]}{{fileID: {_m.Groups[GroupFileID]}, guid: {item.nextGUID}, type: {_m.Groups[GroupType]}}}";
 					++i;
 					return next;
 				});
@@ -170,17 +233,9 @@ namespace Osakana4242 {
 
 			public int LineCount => itemArr.Length;
 
-			public string[] ToLines() {
-				var lineList = new List<string>();
-				foreach (var item in itemArr) {
-					lineList.Add($"{path}\t_{item.label}\t{item.nextPath}");
-				}
-				return lineList.ToArray();
-			}
-
 			public void Write(StringBuilder sb) {
-				foreach (var line in ToLines()) {
-					sb.Append($"{line}\n");
+				foreach (var item in itemArr) {
+					sb.Append($"{item.ToLine()}\n");
 				}
 			}
 
@@ -190,13 +245,8 @@ namespace Osakana4242 {
 					var line = lines[i];
 					if (line.StartsWith("#", StringComparison.Ordinal))
 						continue;
-					var cols = line.Split('\t');
-					var ownerFileName = cols[0];
-					var label = cols[1];
-					var fileName = cols[2];
-
 					var item = itemArr[lines2.Count];
-					lines2.Add(new FileItem(label, item.path, fileName));
+					lines2.Add(item.CreateFromLine(line));
 				}
 				return new File(this, lines2.ToArray());
 			}
@@ -204,12 +254,14 @@ namespace Osakana4242 {
 
 		class FileItem {
 			const string suffix = ":(Not Found)";
+			public readonly string ownerPath;
 			public readonly string path;
 			public readonly string nextPath;
 			public readonly string nextGUID;
 			public readonly string label;
 
-			public FileItem(string label, string path, string nextPath) {
+			public FileItem(string ownerPath, string label, string path, string nextPath) {
+				this.ownerPath = ownerPath;
 				this.label = label;
 				this.path = path;
 				if (string.IsNullOrEmpty(nextPath)) {
@@ -230,12 +282,62 @@ namespace Osakana4242 {
 				}
 			}
 
-			public bool IsValid() => !nextPath.EndsWith(suffix);
+			public FileItem CreateFromLine(string line) {
+				var cols = line.Split('\t');
+				var ownerPath = cols[0];
+				var label = cols[1];
+				var fileName = cols[2];
+				if (this.ownerPath != ownerPath) {
+					throw new System.ArgumentException($"ownerPath の差異を検出. ownerPath1: {this.ownerPath}, ownerPath2: {ownerPath}");
+				}
+				if (this.label != label) {
+					throw new System.ArgumentException($"label の差異を検出. label1: {this.label}, label2: {label}");
+				}
+				return new FileItem(this.ownerPath, this.label, this.path, fileName);
+			}
 
-			public static FileItem CreateFromGUID(string label, string guid) {
+			public string ToLine() {
+				return $"{ownerPath}\t{label}\t{nextPath}";
+			}
+
+			public bool IsValid() {
+				return !nextPath.EndsWith(suffix);
+			}
+
+			public bool IsDirty() {
+				return path != nextPath;
+			}
+
+			public static FileItem CreateFromGUID(string ownerPath, string label, string guid) {
 				var path = AssetDatabase.GUIDToAssetPath(guid);
-				return new FileItem(label, path, path);
+				return new FileItem(ownerPath, label, path, path);
 			}
 		}
+	}
+
+	public readonly struct Span<T> {
+		readonly IList<T> list_;
+		readonly int start_;
+		public readonly int Length;
+
+		public Span(IList<T> list, int start, int length) {
+			var _ = list[start];
+			_ = list[start + length - 1];
+
+			list_ = list;
+			start_ = start;
+			Length = length;
+		}
+
+		public T this[int index] =>
+			list_[start_ + index];
+
+		public Span<T> Slice(int start, int length) =>
+			new Span<T>(list_, start_ + start, length);
+	}
+
+	public static class SpanExt {
+		public static Span<T> AsSpan<T>(this IList<T> self) =>
+			new Span<T>(self, 0, self.Count);
 	}
 }
