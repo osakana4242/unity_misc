@@ -31,9 +31,11 @@ namespace NameBasedObjectReferenceEditorV1 {
 
 				var workList2 = new List<File>();
 				// load	
+				int index = 0;
 				foreach (var item in list) {
 					ThrowIfCanceled();
-					var item2 = new File(item.guid, item.path);
+					var item2 = new File(index, item.guid, item.path);
+					index += item2.LineCount;
 					workList2.Add(item2);
 				}
 				this.workList_ = workList2.ToArray();
@@ -169,12 +171,14 @@ namespace NameBasedObjectReferenceEditorV1 {
 			const string GroupType = "type";
 			const string GroupFileID = "fileID";
 			static readonly Regex regex = new Regex($@"(?<{GroupLabel}>(\w+):\s+|(-.*))?{{fileID:\s+(?<{GroupFileID}>\w+),\s+guid:\s+(?<{GroupGUID}>\w+),\s+type:\s+(?<{GroupType}>\w+)}}");
+			public readonly int index;
 			public readonly string guid;
 			public readonly string path;
 			readonly FileItem[] itemArr;
 			readonly string text_;
 
-			public File(string guid, string path) {
+			public File(int index, string guid, string path) {
+				this.index = index;
 				this.guid = guid;
 				this.path = path;
 				text_ = System.IO.File.ReadAllText(path);
@@ -184,13 +188,14 @@ namespace NameBasedObjectReferenceEditorV1 {
 					var item = matches[i];
 					var groups = item.Groups;
 					Debug.Log($"i: {i}, match: {item}, label: {groups[GroupLabel]}, fileID: {groups[GroupFileID]}, guid: {groups[GroupGUID]}, type: {groups[GroupType]}");
-					var fileItem = FileItem.CreateFromGUID(path, groups[GroupLabel].ToString(), groups[GroupGUID].ToString());
+					var fileItem = FileItem.CreateFromGUID(index + i, path, groups[GroupLabel].ToString(), groups[GroupGUID].ToString());
 					list.Add(fileItem);
 				}
 				itemArr = list.ToArray();
 			}
 
 			File(File other, FileItem[] itemArr) {
+				this.index = other.index;
 				this.guid = other.guid;
 				this.path = other.path;
 				this.text_ = other.text_;
@@ -198,7 +203,7 @@ namespace NameBasedObjectReferenceEditorV1 {
 			}
 
 			public File Reload() {
-				return new File(guid, path);
+				return new File(index, guid, path);
 			}
 
 			public bool IsValid() {
@@ -254,13 +259,15 @@ namespace NameBasedObjectReferenceEditorV1 {
 
 		class FileItem {
 			const string suffix = ":(Not Found)";
+			public readonly int index;
 			public readonly string ownerPath;
 			public readonly string path;
 			public readonly string nextPath;
 			public readonly string nextGUID;
 			public readonly string label;
 
-			public FileItem(string ownerPath, string label, string path, string nextPath) {
+			public FileItem(int index, string ownerPath, string label, string path, string nextPath) {
+				this.index = index;
 				this.ownerPath = ownerPath;
 				this.label = label;
 				this.path = path;
@@ -284,20 +291,24 @@ namespace NameBasedObjectReferenceEditorV1 {
 
 			public FileItem CreateFromLine(string line) {
 				var cols = line.Split('\t');
-				var ownerPath = cols[0];
-				var label = cols[1];
-				var fileName = cols[2];
+				var index = cols[0];
+				var ownerPath = cols[1];
+				var label = cols[2];
+				var fileName = cols[3];
+				if (this.index.ToString() != index) {
+					throw new System.ArgumentException($"index の差異を検出. index1: {this.index}, index2: {index}");
+				}
 				if (this.ownerPath != ownerPath) {
 					throw new System.ArgumentException($"ownerPath の差異を検出. ownerPath1: {this.ownerPath}, ownerPath2: {ownerPath}");
 				}
 				if (this.label != label) {
 					throw new System.ArgumentException($"label の差異を検出. label1: {this.label}, label2: {label}");
 				}
-				return new FileItem(this.ownerPath, this.label, this.path, fileName);
+				return new FileItem(this.index, this.ownerPath, this.label, this.path, fileName);
 			}
 
 			public string ToLine() {
-				return $"{ownerPath}\t{label}\t{nextPath}";
+				return $"{index}\t{ownerPath}\t{label}\t{nextPath}";
 			}
 
 			public bool IsValid() {
@@ -308,9 +319,9 @@ namespace NameBasedObjectReferenceEditorV1 {
 				return path != nextPath;
 			}
 
-			public static FileItem CreateFromGUID(string ownerPath, string label, string guid) {
+			public static FileItem CreateFromGUID(int index, string ownerPath, string label, string guid) {
 				var path = AssetDatabase.GUIDToAssetPath(guid);
-				return new FileItem(ownerPath, label, path, path);
+				return new FileItem(index, ownerPath, label, path, path);
 			}
 		}
 	}
@@ -318,22 +329,39 @@ namespace NameBasedObjectReferenceEditorV1 {
 	public readonly struct Span<T> {
 		readonly IList<T> list_;
 		readonly int start_;
-		public readonly int Length;
+		readonly int length_;
 
 		public Span(IList<T> list, int start, int length) {
-			var _ = list[start];
-			_ = list[start + length - 1];
+			Validate(list.Count, start, length);
 
 			list_ = list;
 			start_ = start;
-			Length = length;
+			length_ = length;
 		}
+
+		public int Length =>
+			length_;
 
 		public T this[int index] =>
 			list_[start_ + index];
 
-		public Span<T> Slice(int start, int length) =>
-			new Span<T>(list_, start_ + start, length);
+		static void Validate(int leftLength, int rightStart, int rightLength) {
+			if (rightStart < 0) {
+				throw new System.IndexOutOfRangeException($"start: {rightStart}, range: [0, {leftLength})");
+			}
+			if (leftLength <= rightStart) {
+				throw new System.IndexOutOfRangeException($"start: {rightStart}, range: [0, {leftLength})");
+			}
+			var last = rightStart + rightLength - 1;
+			if (leftLength <= last) {
+				throw new System.IndexOutOfRangeException($"last: {last}, range: [0, {leftLength})");
+			}
+		}
+
+		public Span<T> Slice(int start, int length) {
+			Validate(length_, start, length);
+			return new Span<T>(list_, start_ + start, length);
+		}
 	}
 
 	public static class SpanExt {
