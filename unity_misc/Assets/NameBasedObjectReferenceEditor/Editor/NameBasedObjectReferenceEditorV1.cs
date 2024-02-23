@@ -7,38 +7,77 @@ using System.Text.RegularExpressions;
 using System.Text;
 using System;
 
-namespace NameBasedObjectReferenceEditorV1 {
+namespace NameBasedObjectReferenceEditors {
 	public class NameBasedObjectReferenceEditorV1 : EditorWindow {
-		string rightText_ = "";
-		File[] workList_ = new File[0];
+		Vector2 scrollPosition_;
+		File[] fileArr_ = new File[0];
+		string text_ = "";
+		string textPath_ = "";
 
 		[MenuItem("Window/Osakana4242/NameBasedObjectReferenceEditorV1")]
 		static void Init() {
 			EditorWindow.GetWindow<NameBasedObjectReferenceEditorV1>();
 		}
 
+		static string[] ToGUIDArr(UnityEngine.Object[] objects) {
+			List<string> guidList = new List<string>();
+			for (int i = 0; i < objects.Length; ++i) {
+				var item = objects[i];
+				ProgressBarUtil.ThrowIfCanceled(i, objects.Length);
+				var isValid = AssetDatabase.TryGetGUIDAndLocalFileIdentifier(item.GetInstanceID(), out var guid, out long _);
+				if (!isValid) {
+					continue;
+				}
+				guidList.Add(guid);
+			}
+			return guidList.ToArray();
+		}
+
+		static string[] GetFilePathArr(string[] guidArr) {
+			var filePathList = new List<string>();
+			while (0 < guidArr.Length) {
+				var folders = new List<string>();
+				for (int i = 0; i < guidArr.Length; ++i) {
+					ProgressBarUtil.ThrowIfCanceled(i, guidArr.Length);
+					var guid = guidArr[i];
+					var path = AssetDatabase.GUIDToAssetPath(guid);
+					if (AssetDatabase.IsValidFolder(path)) {
+						folders.Add(path);
+					} else {
+						filePathList.Add(path);
+					}
+				}
+				if (folders.Count <= 0) {
+					break;
+				}
+				guidArr = AssetDatabase.FindAssets("", folders.ToArray());
+			}
+			return filePathList.ToArray();
+		}
+
+		static File[] CreateFileArr(string[] filePathArr) {
+			var fileList = new List<File>();
+			int lineIndex = 0;
+			for (int i = 0; i < filePathArr.Length; ++i) {
+				var path = filePathArr[i];
+				ProgressBarUtil.ThrowIfCanceled(i, filePathArr.Length, path);
+				var file = new File(lineIndex, path);
+				if (file.LineCount <= 0) {
+					continue;
+				}
+				lineIndex += file.LineCount;
+				fileList.Add(file);
+			}
+			return fileList.ToArray();
+		}
+
 		void LoadFromSelection() {
 			GUI.FocusControl(null);
 
 			try {
-				var list = Selection.objects.
-					Select(_item => {
-						var isValid = AssetDatabase.TryGetGUIDAndLocalFileIdentifier(_item.GetInstanceID(), out var guid, out long _);
-						return (isValid, guid);
-					}).
-					Where(_item => _item.isValid).
-					Select(_item => (_item.guid, path: AssetDatabase.GUIDToAssetPath(_item.guid)));
-
-				var workList2 = new List<File>();
-				// load	
-				int index = 0;
-				foreach (var item in list) {
-					ThrowIfCanceled();
-					var item2 = new File(index, item.guid, item.path);
-					index += item2.LineCount;
-					workList2.Add(item2);
-				}
-				this.workList_ = workList2.ToArray();
+				var guidArr = ToGUIDArr(Selection.objects);
+				var filePathArr = GetFilePathArr(guidArr);
+				fileArr_ = CreateFileArr(filePathArr);
 				BuildText();
 			} catch (System.OperationCanceledException) {
 				EditorUtility.DisplayDialog("Canceled", "Canceled", "OK");
@@ -52,40 +91,57 @@ namespace NameBasedObjectReferenceEditorV1 {
 
 		void BuildText() {
 			var sb = new System.Text.StringBuilder();
-			foreach (var file in workList_) {
-				ThrowIfCanceled();
+			sb.Append(FileItem.LineHeader);
+			sb.Append("\n");
+			foreach (var file in fileArr_) {
+				ProgressBarUtil.ThrowIfCanceled();
 				file.Write(sb);
 			}
-			rightText_ = sb.ToString();
+			text_ = sb.ToString();
+			WriteTextIfNeeded();
 		}
 
-		void ThrowIfCanceled() {
-			var canceled = EditorUtility.DisplayCancelableProgressBar("title", "body", 0);
-			if (!canceled) {
+		void WriteTextIfNeeded() {
+			if (string.IsNullOrEmpty(textPath_)) {
 				return;
 			}
-			throw new System.OperationCanceledException();
+			var text = this.text_;
+			System.IO.File.WriteAllText(textPath_, text, Encoding.UTF8);
+		}
+
+		void OpenText() {
+			if (string.IsNullOrEmpty(textPath_)) {
+				textPath_ = $"Temp/NameBasedObjectReferenceEdit_{System.DateTimeOffset.Now.ToString("yyyyMMddHHmmssff")}.tsv.txt";
+			}
+			WriteTextIfNeeded();
+			var uri = new System.Uri(System.IO.Path.GetFullPath(textPath_));
+			Application.OpenURL(uri.AbsoluteUri);
 		}
 
 		void Validate() {
 			GUI.FocusControl(null);
+			if (!string.IsNullOrEmpty(textPath_)) {
+				text_ = System.IO.File.ReadAllText(textPath_, Encoding.UTF8);
+			}
 			try {
-				var lines = rightText_.
+				var lines = text_.
 					Replace("\r\n", "\n").
 					Split('\n').
+					Where(_line => !_line.StartsWith("#", StringComparison.Ordinal)).
+					ToArray().
 					AsSpan();
-				var index = 0;
 
-				var nextWorkList = new File[workList_.Length];
-				for (int i = 0; i < workList_.Length; ++i) {
-					ThrowIfCanceled();
-					var item = workList_[i];
-					var span = lines.Slice(index, item.LineCount);
-					nextWorkList[i] = item.Read(span);
-					index += item.LineCount;
+				var lineIndex = 0;
+				var nextFileArr = new File[fileArr_.Length];
+				for (int fileIndex = 0; fileIndex < fileArr_.Length; ++fileIndex) {
+					ProgressBarUtil.ThrowIfCanceled();
+					var file = fileArr_[fileIndex];
+					var sliced = lines.Slice(lineIndex, file.LineCount);
+					nextFileArr[fileIndex] = file.Read(sliced);
+					lineIndex += file.LineCount;
 				}
 
-				workList_ = nextWorkList;
+				fileArr_ = nextFileArr;
 				BuildText();
 			} finally {
 				EditorUtility.ClearProgressBar();
@@ -97,10 +153,10 @@ namespace NameBasedObjectReferenceEditorV1 {
 		}
 
 		int GetInValidCount() =>
-			workList_.Sum(_item => _item.GetInValidCount());
+			fileArr_.Sum(_item => _item.GetInValidCount());
 
 		int GetDirtyCount() =>
-			workList_.Sum(_item => _item.GetDirtyCount());
+			fileArr_.Sum(_item => _item.GetDirtyCount());
 
 		void Apply() {
 			GUI.FocusControl(null);
@@ -118,20 +174,20 @@ namespace NameBasedObjectReferenceEditorV1 {
 				}
 
 				try {
-					for (int i = 0; i < workList_.Length; ++i) {
-						ThrowIfCanceled();
-						var item = workList_[i];
+					for (int i = 0; i < fileArr_.Length; ++i) {
+						ProgressBarUtil.ThrowIfCanceled();
+						var item = fileArr_[i];
 						item.Apply();
 					}
 
 					var nextList = new List<File>();
-					for (int i = 0; i < workList_.Length; ++i) {
-						ThrowIfCanceled();
-						var item1 = workList_[i];
+					for (int i = 0; i < fileArr_.Length; ++i) {
+						ProgressBarUtil.ThrowIfCanceled();
+						var item1 = fileArr_[i];
 						var item2 = item1.Reload();
 						nextList.Add(item2);
 					}
-					workList_ = nextList.ToArray();
+					fileArr_ = nextList.ToArray();
 
 				} finally {
 					AssetDatabase.Refresh();
@@ -140,7 +196,6 @@ namespace NameBasedObjectReferenceEditorV1 {
 				EditorUtility.ClearProgressBar();
 			}
 		}
-		Vector2 scrollPosition_;
 
 		void OnGUI() {
 			using (new GUILayout.HorizontalScope()) {
@@ -157,10 +212,19 @@ namespace NameBasedObjectReferenceEditorV1 {
 				}
 			}
 			EditorGUILayout.IntField("Invalid Count", GetInValidCount());
-			EditorGUILayout.IntField("Dirty Count", GetDirtyCount());
+			EditorGUILayout.IntField("Edited Count", GetDirtyCount());
+			if (GUILayout.Button("Open With Text Editor")) {
+				OpenText();
+			}
+			var hasTextFile = !string.IsNullOrEmpty(textPath_);
+			if (hasTextFile) {
+				EditorGUILayout.LabelField(textPath_);
+			}
 			using (var scrollViewScope = new EditorGUILayout.ScrollViewScope(scrollPosition_)) {
 				scrollPosition_ = scrollViewScope.scrollPosition;
-				rightText_ = EditorGUILayout.TextArea(rightText_);
+				using (new EditorGUI.DisabledScope(hasTextFile)) {
+					text_ = EditorGUILayout.TextArea(text_);
+				}
 			}
 		}
 
@@ -172,14 +236,12 @@ namespace NameBasedObjectReferenceEditorV1 {
 			const string GroupFileID = "fileID";
 			static readonly Regex regex = new Regex($@"(?<{GroupLabel}>(\w+):\s+|(-.*))?{{fileID:\s+(?<{GroupFileID}>\w+),\s+guid:\s+(?<{GroupGUID}>\w+),\s+type:\s+(?<{GroupType}>\w+)}}");
 			public readonly int index;
-			public readonly string guid;
 			public readonly string path;
 			readonly FileItem[] itemArr;
 			readonly string text_;
 
-			public File(int index, string guid, string path) {
+			public File(int index, string path) {
 				this.index = index;
-				this.guid = guid;
 				this.path = path;
 				text_ = System.IO.File.ReadAllText(path);
 				var matches = regex.Matches(text_);
@@ -187,7 +249,7 @@ namespace NameBasedObjectReferenceEditorV1 {
 				for (var i = 0; i < matches.Count; ++i) {
 					var item = matches[i];
 					var groups = item.Groups;
-					Debug.Log($"i: {i}, match: {item}, label: {groups[GroupLabel]}, fileID: {groups[GroupFileID]}, guid: {groups[GroupGUID]}, type: {groups[GroupType]}");
+					// Debug.Log($"i: {i}, match: {item}, label: {groups[GroupLabel]}, fileID: {groups[GroupFileID]}, guid: {groups[GroupGUID]}, type: {groups[GroupType]}");
 					var fileItem = FileItem.CreateFromGUID(index + i, path, groups[GroupLabel].ToString(), groups[GroupGUID].ToString());
 					list.Add(fileItem);
 				}
@@ -196,14 +258,13 @@ namespace NameBasedObjectReferenceEditorV1 {
 
 			File(File other, FileItem[] itemArr) {
 				this.index = other.index;
-				this.guid = other.guid;
 				this.path = other.path;
 				this.text_ = other.text_;
 				this.itemArr = itemArr;
 			}
 
 			public File Reload() {
-				return new File(index, guid, path);
+				return new File(index, path);
 			}
 
 			public bool IsValid() {
@@ -240,7 +301,8 @@ namespace NameBasedObjectReferenceEditorV1 {
 
 			public void Write(StringBuilder sb) {
 				foreach (var item in itemArr) {
-					sb.Append($"{item.ToLine()}\n");
+					sb.Append(item.ToLine());
+					sb.Append("\n");
 				}
 			}
 
@@ -258,6 +320,18 @@ namespace NameBasedObjectReferenceEditorV1 {
 		}
 
 		class FileItem {
+			public readonly static string LineHeader =
+				"# ファイル参照の編集手順.\n" +
+				"# 1. refFilePath 列を編集する\n" +
+				"# 2. Validate を実行する\n" +
+				"# 3. Validate で問題が検出されなければ Apply が有効になる\n" +
+				"# 4. Apply を実行する\n" +
+				"# \n" +
+				"# index\townerFilePath\tlabel\treFilePath";
+			const int ColIndexIndex = 0;
+			const int ColIndexOwnerPath = 1;
+			const int ColIndexLabel = 2;
+			const int ColIndexPath = 3;
 			const string suffix = ":(Not Found)";
 			public readonly int index;
 			public readonly string ownerPath;
@@ -291,20 +365,14 @@ namespace NameBasedObjectReferenceEditorV1 {
 
 			public FileItem CreateFromLine(string line) {
 				var cols = line.Split('\t');
-				var index = cols[0];
-				var ownerPath = cols[1];
-				var label = cols[2];
-				var fileName = cols[3];
-				if (this.index.ToString() != index) {
-					throw new System.ArgumentException($"index の差異を検出. index1: {this.index}, index2: {index}");
+				var inIndex = cols[ColIndexIndex];
+				var inOwnerPath = cols[ColIndexOwnerPath];
+				var inLabel = cols[ColIndexLabel];
+				var inFileName = cols[ColIndexPath];
+				if (this.index.ToString() != inIndex) {
+					throw new System.ArgumentException($"index のずれを検出. 期待する index: {this.index}, 入力された index: {inIndex}");
 				}
-				if (this.ownerPath != ownerPath) {
-					throw new System.ArgumentException($"ownerPath の差異を検出. ownerPath1: {this.ownerPath}, ownerPath2: {ownerPath}");
-				}
-				if (this.label != label) {
-					throw new System.ArgumentException($"label の差異を検出. label1: {this.label}, label2: {label}");
-				}
-				return new FileItem(this.index, this.ownerPath, this.label, this.path, fileName);
+				return new FileItem(this.index, this.ownerPath, this.label, this.path, inFileName);
 			}
 
 			public string ToLine() {
@@ -322,6 +390,28 @@ namespace NameBasedObjectReferenceEditorV1 {
 			public static FileItem CreateFromGUID(int index, string ownerPath, string label, string guid) {
 				var path = AssetDatabase.GUIDToAssetPath(guid);
 				return new FileItem(index, ownerPath, label, path, path);
+			}
+		}
+
+		static class ProgressBarUtil {
+			public static string title = nameof(NameBasedObjectReferenceEditorV1);
+			public static string body = "";
+			public static float progress = 0;
+			public static void ThrowIfCanceled(int index, int length, string suffix = "") {
+				if (length <= 0) {
+					progress = 0;
+				} else {
+					progress = index / (float)length;
+				}
+				body = $"{index} / {length} {suffix}";
+				ThrowIfCanceled();
+			}
+			public static void ThrowIfCanceled() {
+				var canceled = EditorUtility.DisplayCancelableProgressBar(title, body, progress);
+				if (!canceled) {
+					return;
+				}
+				throw new System.OperationCanceledException();
 			}
 		}
 	}
@@ -363,6 +453,7 @@ namespace NameBasedObjectReferenceEditorV1 {
 			return new Span<T>(list_, start_ + start, length);
 		}
 	}
+
 
 	public static class SpanExt {
 		public static Span<T> AsSpan<T>(this IList<T> self) =>
