@@ -7,17 +7,21 @@ using System.Text.RegularExpressions;
 using System.Text;
 using System;
 
-namespace NameBasedObjectReferenceEditors {
-	public class NameBasedObjectReferenceEditorV1 : EditorWindow {
+namespace NameBasedFileReferenceEditors {
+	public class NameBasedFileReferenceEditor : EditorWindow {
 		Vector2 scrollPosition_;
 		TargetFile[] fileArr_ = System.Array.Empty<TargetFile>();
 		WorkTextFile workTextFile_ = WorkTextFile.Empty;
 		string text_ = FileItem.LineHeader;
 
-		[MenuItem("Window/Osakana4242/NameBasedObjectReferenceEditorV1")]
+		[MenuItem("Window/Name Based Object Reference Editor")]
 		static void Init() {
-			var self = EditorWindow.GetWindow<NameBasedObjectReferenceEditorV1>();
+			var self = EditorWindow.GetWindow<NameBasedFileReferenceEditor>();
 			self.Clear();
+		}
+
+		void Awake() {
+			position = new Rect(position.position, new Vector2(600, 600));
 		}
 
 		static string[] ToGUIDArr(UnityEngine.Object[] objects) {
@@ -485,7 +489,7 @@ namespace NameBasedObjectReferenceEditors {
 		}
 
 		static class ProgressBarUtil {
-			public static string title = nameof(NameBasedObjectReferenceEditorV1);
+			public static string title = nameof(NameBasedFileReferenceEditor);
 			public static string body = "";
 			public static float progress = 0;
 			public static void ThrowIfCanceled(int index, int length, string suffix = "") {
