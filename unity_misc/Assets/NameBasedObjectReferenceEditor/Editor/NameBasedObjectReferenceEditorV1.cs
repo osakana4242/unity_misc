@@ -9,9 +9,10 @@ using System;
 
 namespace NameBasedObjectReferenceEditors {
 	public class NameBasedObjectReferenceEditorV1 : EditorWindow {
+		static readonly Encoding TempFileEncoding = new System.Text.UTF8Encoding(false);
 		Vector2 scrollPosition_;
 		File[] fileArr_ = new File[0];
-		string text_ = "";
+		string text_ = FileItem.LineHeader;
 		string textPath_ = "";
 
 		[MenuItem("Window/Osakana4242/NameBasedObjectReferenceEditorV1")]
@@ -61,6 +62,9 @@ namespace NameBasedObjectReferenceEditors {
 			for (int i = 0; i < filePathArr.Length; ++i) {
 				var path = filePathArr[i];
 				ProgressBarUtil.ThrowIfCanceled(i, filePathArr.Length, path);
+				if (!File.IsSupportedFile(path)) {
+					continue;
+				}
 				var file = new File(lineIndex, path);
 				if (file.LineCount <= 0) {
 					continue;
@@ -75,6 +79,7 @@ namespace NameBasedObjectReferenceEditors {
 			GUI.FocusControl(null);
 
 			try {
+				textPath_ = "";
 				var guidArr = ToGUIDArr(Selection.objects);
 				var filePathArr = GetFilePathArr(guidArr);
 				fileArr_ = CreateFileArr(filePathArr);
@@ -95,7 +100,7 @@ namespace NameBasedObjectReferenceEditors {
 			sb.Append("\n");
 			foreach (var file in fileArr_) {
 				ProgressBarUtil.ThrowIfCanceled();
-				file.Write(sb);
+				file.WriteTo(sb);
 			}
 			text_ = sb.ToString();
 			WriteTextIfNeeded();
@@ -106,10 +111,10 @@ namespace NameBasedObjectReferenceEditors {
 				return;
 			}
 			var text = this.text_;
-			System.IO.File.WriteAllText(textPath_, text, Encoding.UTF8);
+			System.IO.File.WriteAllText(textPath_, text, TempFileEncoding);
 		}
 
-		void OpenText() {
+		void OpenWithTextEditor() {
 			if (string.IsNullOrEmpty(textPath_)) {
 				textPath_ = $"Temp/NameBasedObjectReferenceEdit_{System.DateTimeOffset.Now.ToString("yyyyMMddHHmmssff")}.tsv.txt";
 			}
@@ -121,7 +126,7 @@ namespace NameBasedObjectReferenceEditors {
 		void Validate() {
 			GUI.FocusControl(null);
 			if (!string.IsNullOrEmpty(textPath_)) {
-				text_ = System.IO.File.ReadAllText(textPath_, Encoding.UTF8);
+				text_ = System.IO.File.ReadAllText(textPath_, TempFileEncoding);
 			}
 			try {
 				var lines = text_.
@@ -137,7 +142,7 @@ namespace NameBasedObjectReferenceEditors {
 					ProgressBarUtil.ThrowIfCanceled();
 					var file = fileArr_[fileIndex];
 					var sliced = lines.Slice(lineIndex, file.LineCount);
-					nextFileArr[fileIndex] = file.Read(sliced);
+					nextFileArr[fileIndex] = file.ReadFrom(sliced);
 					lineIndex += file.LineCount;
 				}
 
@@ -149,7 +154,13 @@ namespace NameBasedObjectReferenceEditors {
 		}
 
 		bool CanApply() {
-			return (GetInValidCount() == 0) && (0 < GetDirtyCount());
+			if (0 < GetInValidCount()) {
+				return false;
+			}
+			if (GetDirtyCount() <= 0) {
+				return false;
+			}
+			return true;
 		}
 
 		int GetInValidCount() =>
@@ -164,12 +175,10 @@ namespace NameBasedObjectReferenceEditors {
 				Validate();
 
 				if (0 < GetInValidCount()) {
-					Debug.Log("can't apply");
 					return;
 				}
 
 				if (GetDirtyCount() <= 0) {
-					Debug.Log("no changes");
 					return;
 				}
 
@@ -198,15 +207,18 @@ namespace NameBasedObjectReferenceEditors {
 		}
 
 		void OnGUI() {
-			using (new GUILayout.HorizontalScope()) {
-				if (GUILayout.Button("Load")) {
+			using (new EditorGUI.DisabledScope(Selection.objects.Length <= 0)) {
+				if (GUILayout.Button($"Load From Selection (Selected: {Selection.objects.Length})")) {
 					LoadFromSelection();
 				}
+			}
+
+			using (new GUILayout.HorizontalScope()) {
 				if (GUILayout.Button("Validate")) {
 					Validate();
 				}
 				using (new EditorGUI.DisabledScope(!CanApply())) {
-					if (GUILayout.Button("Apply")) {
+					if (GUILayout.Button($"Apply (Edited: {GetDirtyCount()})")) {
 						Apply();
 					}
 				}
@@ -214,7 +226,7 @@ namespace NameBasedObjectReferenceEditors {
 			EditorGUILayout.IntField("Invalid Count", GetInValidCount());
 			EditorGUILayout.IntField("Edited Count", GetDirtyCount());
 			if (GUILayout.Button("Open With Text Editor")) {
-				OpenText();
+				OpenWithTextEditor();
 			}
 			var hasTextFile = !string.IsNullOrEmpty(textPath_);
 			if (hasTextFile) {
@@ -229,38 +241,51 @@ namespace NameBasedObjectReferenceEditors {
 		}
 
 		class File {
+			static readonly Encoding AssetFileEncoding = TempFileEncoding;
+			static readonly string UTF8Bom = AssetFileEncoding.GetString(new byte[] { 0xEF, 0xBB, 0xBF });
+			static readonly string Header = "%YAML 1.1";
 
 			const string GroupLabel = "label";
 			const string GroupGUID = "guid";
 			const string GroupType = "type";
 			const string GroupFileID = "fileID";
 			static readonly Regex regex = new Regex($@"(?<{GroupLabel}>(\w+):\s+|(-.*))?{{fileID:\s+(?<{GroupFileID}>\w+),\s+guid:\s+(?<{GroupGUID}>\w+),\s+type:\s+(?<{GroupType}>\w+)}}");
+
 			public readonly int index;
 			public readonly string path;
-			readonly FileItem[] itemArr;
+			readonly FileItem[] itemArr_;
 			readonly string text_;
 
 			public File(int index, string path) {
 				this.index = index;
 				this.path = path;
-				text_ = System.IO.File.ReadAllText(path);
-				var matches = regex.Matches(text_);
-				var list = new List<FileItem>();
-				for (var i = 0; i < matches.Count; ++i) {
-					var item = matches[i];
-					var groups = item.Groups;
-					// Debug.Log($"i: {i}, match: {item}, label: {groups[GroupLabel]}, fileID: {groups[GroupFileID]}, guid: {groups[GroupGUID]}, type: {groups[GroupType]}");
-					var fileItem = FileItem.CreateFromGUID(index + i, path, groups[GroupLabel].ToString(), groups[GroupGUID].ToString());
-					list.Add(fileItem);
-				}
-				itemArr = list.ToArray();
+				text_ = System.IO.File.ReadAllText(path, AssetFileEncoding);
+				itemArr_ = CreateItemArr(path, index, text_);
 			}
 
 			File(File other, FileItem[] itemArr) {
 				this.index = other.index;
 				this.path = other.path;
 				this.text_ = other.text_;
-				this.itemArr = itemArr;
+				this.itemArr_ = itemArr;
+			}
+
+			public int LineCount => itemArr_.Length;
+
+			public static bool IsSupportedFile(string path) {
+				using (var file = System.IO.File.Open(path, System.IO.FileMode.Open, System.IO.FileAccess.Read)) {
+					byte[] buffer = new byte[32];
+					var readedCount = file.Read(buffer, 0, buffer.Length);
+					if (readedCount <= 0) return false;
+					var str = AssetFileEncoding.GetString(buffer, 0, readedCount);
+					var hasBom = str.StartsWith(UTF8Bom, StringComparison.Ordinal);
+					var headerIndex = str.IndexOf(Header, StringComparison.Ordinal);
+					if (hasBom) {
+						return headerIndex == 1;
+					} else {
+						return headerIndex == 0;
+					}
+				}
 			}
 
 			public File Reload() {
@@ -268,20 +293,33 @@ namespace NameBasedObjectReferenceEditors {
 			}
 
 			public bool IsValid() {
-				var invalidIndex = System.Array.FindIndex(itemArr, (_item) => !_item.IsValid());
+				var invalidIndex = System.Array.FindIndex(itemArr_, (_item) => !_item.IsValid());
 				return invalidIndex == -1;
 			}
 
 			public bool IsDirty() {
-				var dirtyIndex = System.Array.FindIndex(itemArr, (_item) => _item.IsDirty());
+				var dirtyIndex = System.Array.FindIndex(itemArr_, (_item) => _item.IsDirty());
 				return dirtyIndex != -1;
 			}
 
 			public int GetInValidCount() =>
-				itemArr.Count((_item) => !_item.IsValid());
+				itemArr_.Count((_item) => !_item.IsValid());
 
 			public int GetDirtyCount() =>
-				itemArr.Count((_item) => _item.IsDirty());
+				itemArr_.Count((_item) => _item.IsDirty());
+
+			static FileItem[] CreateItemArr(string ownerPath, int index, string text) {
+				var matches = regex.Matches(text);
+				var list = new List<FileItem>();
+				for (var i = 0; i < matches.Count; ++i) {
+					var item = matches[i];
+					var groups = item.Groups;
+					// Debug.Log($"i: {i}, match: {item}, label: {groups[GroupLabel]}, fileID: {groups[GroupFileID]}, guid: {groups[GroupGUID]}, type: {groups[GroupType]}");
+					var fileItem = FileItem.CreateFromGUID(index + i, ownerPath, groups[GroupLabel].ToString(), groups[GroupGUID].ToString());
+					list.Add(fileItem);
+				}
+				return list.ToArray();
+			}
 
 			public void Apply() {
 				if (!IsValid()) {
@@ -289,31 +327,27 @@ namespace NameBasedObjectReferenceEditors {
 				}
 				var i = 0;
 				var text = regex.Replace(text_, (_m) => {
-					var item = itemArr[i];
+					var item = itemArr_[i];
 					var next = $"{_m.Groups[GroupLabel]}{{fileID: {_m.Groups[GroupFileID]}, guid: {item.nextGUID}, type: {_m.Groups[GroupType]}}}";
 					++i;
 					return next;
 				});
-				System.IO.File.WriteAllText(path, text, Encoding.UTF8);
+				System.IO.File.WriteAllText(path, text, AssetFileEncoding);
 			}
 
-			public int LineCount => itemArr.Length;
-
-			public void Write(StringBuilder sb) {
-				foreach (var item in itemArr) {
+			public void WriteTo(StringBuilder sb) {
+				foreach (var item in itemArr_) {
 					sb.Append(item.ToLine());
 					sb.Append("\n");
 				}
 			}
 
-			public File Read(Span<string> lines) {
-				var lines2 = new List<FileItem>(itemArr.Length);
+			public File ReadFrom(Span<string> lines) {
+				var lines2 = new List<FileItem>(itemArr_.Length);
 				for (int i = 0; i < lines.Length; ++i) {
 					var line = lines[i];
-					if (line.StartsWith("#", StringComparison.Ordinal))
-						continue;
-					var item = itemArr[lines2.Count];
-					lines2.Add(item.CreateFromLine(line));
+					var item = itemArr_[lines2.Count];
+					lines2.Add(item.ReadFrom(line));
 				}
 				return new File(this, lines2.ToArray());
 			}
@@ -322,10 +356,11 @@ namespace NameBasedObjectReferenceEditors {
 		class FileItem {
 			public readonly static string LineHeader =
 				"# ファイル参照の編集手順.\n" +
-				"# 1. refFilePath 列を編集する\n" +
-				"# 2. Validate を実行する\n" +
-				"# 3. Validate で問題が検出されなければ Apply が有効になる\n" +
-				"# 4. Apply を実行する\n" +
+				"# 1. ファイルまたはフォルダーを選択し Load From Selection を選択する\n" +
+				"# 2. refFilePath 列を編集する\n" +
+				"# 3. Validate を選択する\n" +
+				"# 4. Validate で問題が検出されなければ Apply が有効になる\n" +
+				"# 5. Apply を選択する\n" +
 				"# \n" +
 				"# index\townerFilePath\tlabel\treFilePath";
 			const int ColIndexIndex = 0;
@@ -363,7 +398,7 @@ namespace NameBasedObjectReferenceEditors {
 				}
 			}
 
-			public FileItem CreateFromLine(string line) {
+			public FileItem ReadFrom(string line) {
 				var cols = line.Split('\t');
 				var inIndex = cols[ColIndexIndex];
 				var inOwnerPath = cols[ColIndexOwnerPath];
@@ -416,7 +451,7 @@ namespace NameBasedObjectReferenceEditors {
 		}
 	}
 
-	public readonly struct Span<T> {
+	readonly struct Span<T> {
 		readonly IList<T> list_;
 		readonly int start_;
 		readonly int length_;
@@ -454,8 +489,7 @@ namespace NameBasedObjectReferenceEditors {
 		}
 	}
 
-
-	public static class SpanExt {
+	static class SpanExt {
 		public static Span<T> AsSpan<T>(this IList<T> self) =>
 			new Span<T>(self, 0, self.Count);
 	}
