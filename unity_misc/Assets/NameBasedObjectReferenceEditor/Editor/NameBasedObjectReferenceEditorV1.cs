@@ -9,15 +9,15 @@ using System;
 
 namespace NameBasedObjectReferenceEditors {
 	public class NameBasedObjectReferenceEditorV1 : EditorWindow {
-		static readonly Encoding TempFileEncoding = new System.Text.UTF8Encoding(false);
 		Vector2 scrollPosition_;
-		File[] fileArr_ = new File[0];
+		TargetFile[] fileArr_ = System.Array.Empty<TargetFile>();
+		WorkTextFile workTextFile_ = WorkTextFile.Empty;
 		string text_ = FileItem.LineHeader;
-		string textPath_ = "";
 
 		[MenuItem("Window/Osakana4242/NameBasedObjectReferenceEditorV1")]
 		static void Init() {
-			EditorWindow.GetWindow<NameBasedObjectReferenceEditorV1>();
+			var self = EditorWindow.GetWindow<NameBasedObjectReferenceEditorV1>();
+			self.Clear();
 		}
 
 		static string[] ToGUIDArr(UnityEngine.Object[] objects) {
@@ -56,16 +56,16 @@ namespace NameBasedObjectReferenceEditors {
 			return filePathList.ToArray();
 		}
 
-		static File[] CreateFileArr(string[] filePathArr) {
-			var fileList = new List<File>();
+		static TargetFile[] CreateFileArr(string[] filePathArr) {
+			var fileList = new List<TargetFile>();
 			int lineIndex = 0;
 			for (int i = 0; i < filePathArr.Length; ++i) {
 				var path = filePathArr[i];
 				ProgressBarUtil.ThrowIfCanceled(i, filePathArr.Length, path);
-				if (!File.IsSupportedFile(path)) {
+				if (!TargetFile.IsSupportedFile(path)) {
 					continue;
 				}
-				var file = new File(lineIndex, path);
+				var file = new TargetFile(lineIndex, path);
 				if (file.LineCount <= 0) {
 					continue;
 				}
@@ -79,7 +79,8 @@ namespace NameBasedObjectReferenceEditors {
 			GUI.FocusControl(null);
 
 			try {
-				textPath_ = "";
+				workTextFile_.Dispose();
+				workTextFile_ = WorkTextFile.Empty;
 				var guidArr = ToGUIDArr(Selection.objects);
 				var filePathArr = GetFilePathArr(guidArr);
 				fileArr_ = CreateFileArr(filePathArr);
@@ -103,30 +104,29 @@ namespace NameBasedObjectReferenceEditors {
 				file.WriteTo(sb);
 			}
 			text_ = sb.ToString();
-			WriteTextIfNeeded();
-		}
-
-		void WriteTextIfNeeded() {
-			if (string.IsNullOrEmpty(textPath_)) {
-				return;
-			}
-			var text = this.text_;
-			System.IO.File.WriteAllText(textPath_, text, TempFileEncoding);
+			workTextFile_.Write(text_);
 		}
 
 		void OpenWithTextEditor() {
-			if (string.IsNullOrEmpty(textPath_)) {
-				textPath_ = $"Temp/NameBasedObjectReferenceEdit_{System.DateTimeOffset.Now.ToString("yyyyMMddHHmmssff")}.tsv.txt";
+			if (workTextFile_.IsEmpty()) {
+				workTextFile_ = WorkTextFile.Create();
 			}
-			WriteTextIfNeeded();
-			var uri = new System.Uri(System.IO.Path.GetFullPath(textPath_));
-			Application.OpenURL(uri.AbsoluteUri);
+			workTextFile_.Write(text_);
+			workTextFile_.OpenWithTextEditor();
+		}
+
+		void Clear() {
+			GUI.FocusControl(null);
+			workTextFile_.Dispose();
+			workTextFile_ = WorkTextFile.Empty;
+			text_ = FileItem.LineHeader;
+			fileArr_ = System.Array.Empty<TargetFile>();
 		}
 
 		void Validate() {
 			GUI.FocusControl(null);
-			if (!string.IsNullOrEmpty(textPath_)) {
-				text_ = System.IO.File.ReadAllText(textPath_, TempFileEncoding);
+			if (!workTextFile_.IsEmpty()) {
+				text_ = workTextFile_.Read();
 			}
 			try {
 				var lines = text_.
@@ -137,7 +137,7 @@ namespace NameBasedObjectReferenceEditors {
 					AsSpan();
 
 				var lineIndex = 0;
-				var nextFileArr = new File[fileArr_.Length];
+				var nextFileArr = new TargetFile[fileArr_.Length];
 				for (int fileIndex = 0; fileIndex < fileArr_.Length; ++fileIndex) {
 					ProgressBarUtil.ThrowIfCanceled();
 					var file = fileArr_[fileIndex];
@@ -189,7 +189,7 @@ namespace NameBasedObjectReferenceEditors {
 						item.Apply();
 					}
 
-					var nextList = new List<File>();
+					var nextList = new List<TargetFile>();
 					for (int i = 0; i < fileArr_.Length; ++i) {
 						ProgressBarUtil.ThrowIfCanceled();
 						var item1 = fileArr_[i];
@@ -213,36 +213,89 @@ namespace NameBasedObjectReferenceEditors {
 				}
 			}
 
-			using (new GUILayout.HorizontalScope()) {
-				if (GUILayout.Button("Validate")) {
-					Validate();
-				}
-				using (new EditorGUI.DisabledScope(!CanApply())) {
-					if (GUILayout.Button($"Apply (Edited: {GetDirtyCount()})")) {
-						Apply();
-					}
+			if (GUILayout.Button("Clear")) {
+				Clear();
+			}
+
+			if (GUILayout.Button("Validate")) {
+				Validate();
+			}
+			using (new EditorGUI.DisabledScope(!CanApply())) {
+				if (GUILayout.Button($"Apply (Edited: {GetDirtyCount()})")) {
+					Apply();
 				}
 			}
-			EditorGUILayout.IntField("Invalid Count", GetInValidCount());
-			EditorGUILayout.IntField("Edited Count", GetDirtyCount());
+			{
+				var invalidCount = GetInValidCount();
+				if (0 < invalidCount) {
+					EditorGUILayout.HelpBox($"Invalid Reference Count: {invalidCount}", MessageType.Error);
+				}
+			}
 			if (GUILayout.Button("Open With Text Editor")) {
 				OpenWithTextEditor();
 			}
-			var hasTextFile = !string.IsNullOrEmpty(textPath_);
-			if (hasTextFile) {
-				EditorGUILayout.LabelField(textPath_);
+			if (!workTextFile_.IsEmpty()) {
+				EditorGUILayout.LabelField(workTextFile_.filePath_);
 			}
 			using (var scrollViewScope = new EditorGUILayout.ScrollViewScope(scrollPosition_)) {
 				scrollPosition_ = scrollViewScope.scrollPosition;
-				using (new EditorGUI.DisabledScope(hasTextFile)) {
+				using (new EditorGUI.DisabledScope(!workTextFile_.IsEmpty())) {
 					text_ = EditorGUILayout.TextArea(text_);
 				}
 			}
 		}
 
-		class File {
-			static readonly Encoding AssetFileEncoding = TempFileEncoding;
-			static readonly string UTF8Bom = AssetFileEncoding.GetString(new byte[] { 0xEF, 0xBB, 0xBF });
+		class WorkTextFile {
+			public static readonly Encoding FileEncoding = new System.Text.UTF8Encoding(false);
+			public static readonly WorkTextFile Empty = new WorkTextFile("");
+			public readonly string filePath_ = "";
+			WorkTextFile(string filePath) {
+				filePath_ = filePath;
+			}
+			public static WorkTextFile Create() {
+				var path = $"Temp/NameBasedObjectReferenceEdit_{System.DateTimeOffset.Now.ToString("yyyyMMddHHmmssff")}.tsv.txt";
+				return new WorkTextFile(path);
+			}
+
+			public bool IsEmpty() => string.IsNullOrEmpty(filePath_);
+
+			public string Read() {
+				if (IsEmpty()) {
+					return "";
+				}
+				return System.IO.File.ReadAllText(filePath_, FileEncoding);
+			}
+
+			public void Write(string text) {
+				if (IsEmpty()) {
+					return;
+				}
+				System.IO.File.WriteAllText(filePath_, text, FileEncoding);
+			}
+
+			public void OpenWithTextEditor() {
+				var uri = new System.Uri(System.IO.Path.GetFullPath(filePath_));
+				Application.OpenURL(uri.AbsoluteUri);
+			}
+
+			public void Dispose() {
+				if (IsEmpty()) {
+					return;
+				}
+				if (!System.IO.File.Exists(filePath_)) {
+					return;
+				}
+				try {
+					System.IO.File.Delete(filePath_);
+				} catch (System.Exception ex) {
+					Debug.LogError(ex);
+				}
+			}
+		}
+
+		class TargetFile {
+			static readonly Encoding FileEncoding = WorkTextFile.FileEncoding;
+			static readonly string UTF8Bom = FileEncoding.GetString(new byte[] { 0xEF, 0xBB, 0xBF });
 			static readonly string Header = "%YAML 1.1";
 
 			const string GroupLabel = "label";
@@ -256,14 +309,14 @@ namespace NameBasedObjectReferenceEditors {
 			readonly FileItem[] itemArr_;
 			readonly string text_;
 
-			public File(int index, string path) {
+			public TargetFile(int index, string path) {
 				this.index = index;
 				this.path = path;
-				text_ = System.IO.File.ReadAllText(path, AssetFileEncoding);
+				text_ = System.IO.File.ReadAllText(path, FileEncoding);
 				itemArr_ = CreateItemArr(path, index, text_);
 			}
 
-			File(File other, FileItem[] itemArr) {
+			TargetFile(TargetFile other, FileItem[] itemArr) {
 				this.index = other.index;
 				this.path = other.path;
 				this.text_ = other.text_;
@@ -277,7 +330,7 @@ namespace NameBasedObjectReferenceEditors {
 					byte[] buffer = new byte[32];
 					var readedCount = file.Read(buffer, 0, buffer.Length);
 					if (readedCount <= 0) return false;
-					var str = AssetFileEncoding.GetString(buffer, 0, readedCount);
+					var str = FileEncoding.GetString(buffer, 0, readedCount);
 					var hasBom = str.StartsWith(UTF8Bom, StringComparison.Ordinal);
 					var headerIndex = str.IndexOf(Header, StringComparison.Ordinal);
 					if (hasBom) {
@@ -288,8 +341,8 @@ namespace NameBasedObjectReferenceEditors {
 				}
 			}
 
-			public File Reload() {
-				return new File(index, path);
+			public TargetFile Reload() {
+				return new TargetFile(index, path);
 			}
 
 			public bool IsValid() {
@@ -332,7 +385,7 @@ namespace NameBasedObjectReferenceEditors {
 					++i;
 					return next;
 				});
-				System.IO.File.WriteAllText(path, text, AssetFileEncoding);
+				System.IO.File.WriteAllText(path, text, FileEncoding);
 			}
 
 			public void WriteTo(StringBuilder sb) {
@@ -342,14 +395,14 @@ namespace NameBasedObjectReferenceEditors {
 				}
 			}
 
-			public File ReadFrom(Span<string> lines) {
+			public TargetFile ReadFrom(Span<string> lines) {
 				var lines2 = new List<FileItem>(itemArr_.Length);
 				for (int i = 0; i < lines.Length; ++i) {
 					var line = lines[i];
 					var item = itemArr_[lines2.Count];
 					lines2.Add(item.ReadFrom(line));
 				}
-				return new File(this, lines2.ToArray());
+				return new TargetFile(this, lines2.ToArray());
 			}
 		}
 
@@ -474,11 +527,8 @@ namespace NameBasedObjectReferenceEditors {
 			if (rightStart < 0) {
 				throw new System.IndexOutOfRangeException($"start: {rightStart}, range: [0, {leftLength})");
 			}
-			if (leftLength <= rightStart) {
-				throw new System.IndexOutOfRangeException($"start: {rightStart}, range: [0, {leftLength})");
-			}
-			var last = rightStart + rightLength - 1;
-			if (leftLength <= last) {
+			var last = rightStart + rightLength;
+			if (leftLength < last) {
 				throw new System.IndexOutOfRangeException($"last: {last}, range: [0, {leftLength})");
 			}
 		}
