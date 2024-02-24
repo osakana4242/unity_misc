@@ -408,14 +408,17 @@ namespace NameBasedObjectReferenceEditors {
 
 		class FileItem {
 			public readonly static string LineHeader =
-				"# ファイル参照の編集手順.\n" +
-				"# 1. ファイルまたはフォルダーを選択し Load From Selection を選択する\n" +
-				"# 2. refFilePath 列を編集する\n" +
-				"# 3. Validate を選択する\n" +
-				"# 4. Validate で問題が検出されなければ Apply が有効になる\n" +
-				"# 5. Apply を選択する\n" +
-				"# \n" +
-				"# index\townerFilePath\tlabel\treFilePath";
+@"# ファイル参照の編集手順
+# 1. 編集したいファイルまたはフォルダーを Project で選択し Load From Selection を選択する.
+#    各ファイル内の他ファイル参照箇所が列挙される.
+# 2. refFilePath 列を編集する.
+#    index 列がズレないように注意する.
+#    その他の列は編集しても結果に影響しない.
+# 3. Validate を選択する.
+#    問題が検出されなければ Apply が有効になる.
+# 4. Apply を選択する.
+#
+# index	ownerFilePath	label	reFilePath";
 			const int ColIndexIndex = 0;
 			const int ColIndexOwnerPath = 1;
 			const int ColIndexLabel = 2;
