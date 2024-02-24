@@ -12,16 +12,21 @@ namespace NameBasedFileReferenceEditors {
 		Vector2 scrollPosition_;
 		TargetFile[] fileArr_ = System.Array.Empty<TargetFile>();
 		WorkTextFile workTextFile_ = WorkTextFile.Empty;
-		string text_ = FileItem.LineHeader;
+		string text_ = FileItem.Header;
 
-		[MenuItem("Window/Name Based Object Reference Editor")]
+		[MenuItem("Window/Name Based File Reference Editor")]
 		static void Init() {
 			var self = EditorWindow.GetWindow<NameBasedFileReferenceEditor>();
 			self.Clear();
 		}
 
 		void Awake() {
+			this.titleContent = new GUIContent("Name Based File Ref", "Name Based File Reference Editor");
 			position = new Rect(position.position, new Vector2(600, 600));
+		}
+
+		void OnDestroy() {
+			workTextFile_.Dispose();
 		}
 
 		static string[] ToGUIDArr(UnityEngine.Object[] objects) {
@@ -101,7 +106,7 @@ namespace NameBasedFileReferenceEditors {
 
 		void BuildText() {
 			var sb = new System.Text.StringBuilder();
-			sb.Append(FileItem.LineHeader);
+			sb.Append(FileItem.Header);
 			sb.Append("\n");
 			foreach (var file in fileArr_) {
 				ProgressBarUtil.ThrowIfCanceled();
@@ -123,7 +128,7 @@ namespace NameBasedFileReferenceEditors {
 			GUI.FocusControl(null);
 			workTextFile_.Dispose();
 			workTextFile_ = WorkTextFile.Empty;
-			text_ = FileItem.LineHeader;
+			text_ = FileItem.Header;
 			fileArr_ = System.Array.Empty<TargetFile>();
 		}
 
@@ -411,18 +416,19 @@ namespace NameBasedFileReferenceEditors {
 		}
 
 		class FileItem {
-			public readonly static string LineHeader =
+			public readonly static string Header =
 @"# ファイル参照の編集手順
-# 1. 編集したいファイルまたはフォルダーを Project で選択し Load From Selection を選択する.
+# 1. 編集したいファイルまたはフォルダーを 'Project' で選択する.
+# 2. 'Load From Selection' を選択する.
 #    各ファイル内の他ファイル参照箇所が列挙される.
-# 2. refFilePath 列を編集する.
-#    index 列がズレないように注意する.
+# 3. 'refFilePath' 列を編集する.
+#    'index' 列がズレないように注意しながら.
 #    その他の列は編集しても結果に影響しない.
-# 3. Validate を選択する.
-#    問題が検出されなければ Apply が有効になる.
-# 4. Apply を選択する.
+# 4. 'Validate' を選択する.
+#    問題が検出されなければ 'Apply' が有効になる.
+# 5. 'Apply' を選択する.
 #
-# index	ownerFilePath	label	reFilePath";
+# index	ownerFilePath	label	refFilePath";
 			const int ColIndexIndex = 0;
 			const int ColIndexOwnerPath = 1;
 			const int ColIndexLabel = 2;
