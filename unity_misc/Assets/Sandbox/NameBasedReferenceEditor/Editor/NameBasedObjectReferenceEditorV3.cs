@@ -9,8 +9,8 @@ using System;
 using System.Reflection;
 using NUnit.Compatibility;
 
-namespace NameBaseObjectReferenceEditorV3 {
-	public class NameBasedObjectReferenceEditorV3 : EditorWindow {
+namespace NameBaseFileReferenceEditorsV3 {
+	public class NameBasedFileReferenceEditorV3 : EditorWindow {
 
 		string rightText_ = "";
 		File[] workList_ = new File[0];
@@ -18,9 +18,9 @@ namespace NameBaseObjectReferenceEditorV3 {
 		int progressIndex_;
 		int progressCount_;
 
-		[MenuItem("Window/Osakana4242/NameBasedObjectReferenceEditorV3")]
+		[MenuItem("Window/Sandbox/Name Based File Reference Editor v3")]
 		static void Init() {
-			EditorWindow.GetWindow<NameBasedObjectReferenceEditorV3>();
+			EditorWindow.GetWindow<NameBasedFileReferenceEditorV3>();
 		}
 
 		void LoadFromSelection() {
@@ -126,7 +126,7 @@ namespace NameBaseObjectReferenceEditorV3 {
 
 		void OnGUI() {
 			using (new EditorGUILayout.HorizontalScope()) {
-				if (GUILayout.Button("Load")) {
+				if (GUILayout.Button("Load From Selection")) {
 					LoadFromSelection();
 				}
 				if (GUILayout.Button("Validate")) {
